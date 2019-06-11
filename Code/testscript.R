@@ -6,14 +6,16 @@ Rcpp::sourceCpp('ForwardSim.cpp')
 
 # This looks at the individual functions to get an idea of their behaviour and reasonable parameters
 ##****** The transit time function for reticulocytes moving from bone marrow to circulation
-Hbs = seq(7,14,length.out = 100)
+Hbs = seq(0,20,length.out = 100)
 tts = array(dim=length(Hbs))
 for(i in 1:length(Hbs)){
-  tts[i] = (120 - compute_transit_time(C_t_minus_1 = Hb_to_NumberCells(Hb = Hbs[i],
-                                                                       BloodVolume = 5,
-                                                                       MeanCellHb = 30),
-                                       Hb_50_circ = 10, k = 10^(-6),BloodVolume = 5,
-                                       MeanCellHb = 30))/24
+  tts[i] = (120-compute_transit_time(C_t_minus_1 = Hb_to_NumberCells(Hb = Hbs[i],
+                                                                     BloodVolume = 5,
+                                                                     MeanCellHb = 30),
+                                     Hb_50_circ = 10, 
+                                     k = 10^(-6),
+                                     BloodVolume = 5,
+                                     MeanCellHb = 30))/24
 }
 plot(Hbs,tts, type='l', ylab = 'Number of days that retics circulate', 
      xlab='Haemoglobin',main = 'transit time function')
@@ -47,7 +49,7 @@ for(i in 1:length(Hbs)){
                                                                 BloodVolume = 5,
                                                                 MeanCellHb = 30))
 }
-plot(Hbs, rhos, type='l',xlab = 'Hb',ylab = 'Fold change in normoblast production')
+plot(Hbs, rhos, type='l',xlab = 'Hb',ylab = 'Fold change in normoblast production',lwd=3)
 abline(h=1, v=15)
 
 ##****** Testing out the full simulation function *******
@@ -66,33 +68,12 @@ out = forward_sim(drug_regimen = as.double(drug_regimen),
                   MeanCellHb = 30,
                   BloodVolume = 5)
 
-par(las=1, bty='n')
-layout(matrix(c(1,1,2,3), nrow = 2, ncol = 2))
-plot((1:length(out$CiculatingRBCs))/24, out$CiculatingRBCs/10^5,
-     pch='.', xlab='days of life',ylab='x reference number of cells',
-     ylim = c(0,3))
-
-plot((1:length(drug_regimen))/24,out$haemtocrit/3, lwd=2,ylim=c(30,45)/3,
-     type='l',xlab='days',ylab = 'HCT (%)')
-title("Haematocrit")
-plot((1:length(drug_regimen))/24,out$retic_percent, lwd=2,ylim=c(0,9),
+par(las=1, bty='n', mfrow=c(1,2))
+plot((1:length(drug_regimen))/24,out$Hb, lwd=2,#ylim=c(30,45)/3,
+     type='l',xlab='days',ylab = 'Haemoglobin (g/dL)')
+title("Haemoglobin")
+plot((1:length(drug_regimen))/24,out$retic_percent, lwd=2,#ylim=c(0,9),
      type='l',xlab='days',ylab = 'retics (%)')
 title("Retic count")
 
-
-
-plot(out$effectiveDose,out$SS_LifeSpan, type='l')
-
-
-plot((1:length(drug_regimen))/24,out$haemtocrit, lwd=2,
-     type='l',xlab='days',ylab = 'HCT(%)')
-polygon(c(0,5,5,0), c(0,0,1000,1000), col = blues[1], border = NA)
-polygon(c(5,10,10,5), c(0,0,1000,1000), col = blues[2], border = NA)
-polygon(c(10,15,15,10), c(0,0,1000,1000), col = blues[3], border = NA)
-polygon(c(15,20,20,15), c(0,0,1000,1000), col = blues[4], border = NA)
-lines(days, 3*Hbs, lwd=2, col='red')
-
-plot(1:length(drug_regimen)/24, out$retic_percent, type='l',ylim = c(0,10))
-
-lines(days, Retics, lwd=2, col='red')
 

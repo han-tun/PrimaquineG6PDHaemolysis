@@ -8,7 +8,7 @@ double compute_effective_dose(NumericVector drug_regimen, int t, int T_m){
   // (in practice only dosed once a day, this can later changed to drug concentration)
   // t: current time point
   // T_m: time delay to reach full effect
-  if(t > drug_regimen.length()) throw std::range_error("Inadmissible value for t");
+  if(t > drug_regimen.size()) throw std::range_error("Inadmissible value for t");
   double effective_dose = 0.0;
   if(t > 0){
     // index at which we start counting for the effective dose
@@ -41,7 +41,7 @@ double Fold_Change_Production(double rho_max,       // Max fold increase
                               double Cstar,         // Steady state number of cells
                               double C_t_minus_1,   // Total number of cells at previous timepoint
                               double C_50_rho       // mid point
-                                ){
+){
   double rho;
   rho = rho_max/(1 + exp(log(rho_max-1)/(Cstar - C_50_rho)*(C_t_minus_1 - C_50_rho)));
   return rho;
@@ -89,14 +89,14 @@ List forward_sim(NumericVector drug_regimen,  // dose present at each hour (mg/k
                  double MeanCellHb,           // mean corpuscular Hb (picogram)
                  double BloodVolume           // Total blood volume (liters)
 ){
-  
+
   // set up variables we need for the simulation
   int nhours = drug_regimen.size(); // This determines the length of the simulation in hours
   int i, t;                         // i iterates over age distributions, t over time of simulation
   int T_nmblast  = 24*5;            // number of hours of maturation of normoblasts
   int T_retic = 24*5;               // lifespan of a reticulocyte, including marrow and circulating periods
   int T_RBC_max = 24*150;           // max duration of RBC life: arbitrary to some extent (hours)
-  NumericVector SS_LifeSpan(nhours);      // The drug dependent life span of an RBC (true continuous value)
+  double SS_LifeSpan;        // The drug dependent life span of an RBC (true continuous value)
   int T_lifeSpan;                         // The drug dependent life span of an RBC (rounded up to hours)
   double rho;                             // stores the fold change increase in production of normoblasts
   double Total_Eryths, Total_retics;      // Total circulating erythrocytes and retics
@@ -112,7 +112,7 @@ List forward_sim(NumericVector drug_regimen,  // dose present at each hour (mg/k
   NumericVector normoblasts(T_nmblast);   // Distribution of normoblasts 
   NumericVector reticulocytes(T_retic);   // Distribution of reticulocytes 
   NumericVector temp_circ(T_RBC_max);     // for storing: temporary vectors
-  NumericVector temp_marrow(T_nmblast);
+  NumericVector temp_normoblasts(T_nmblast);
   NumericVector temp_retics(T_retic);
   
   
@@ -130,69 +130,65 @@ List forward_sim(NumericVector drug_regimen,  // dose present at each hour (mg/k
   C_t[0] = Cstar; 
   effectiveDose[0] = 0.0;
   // The steady state lifespan: assuming at no drug steady state
-  SS_LifeSpan[0] = compute_steady_state_life_span(T_E_star,
-                                                  E_max,
-                                                  effectiveDose[0],
-                                                  x_50,
-                                                  PMQ_slope);
-  T_lifeSpan = round(SS_LifeSpan[0]); // the rounded up approximation
+  SS_LifeSpan = compute_steady_state_life_span(T_E_star,
+                                               E_max,
+                                               effectiveDose[0],
+                                                            x_50,
+                                                            PMQ_slope);
+  T_lifeSpan = round(SS_LifeSpan); // the rounded up approximation
   Hb[0] = Hb_steady_state;
-
+  
   // compute time at which retics are in the circulation
   int transit = compute_transit_time(C_t[0],
                                      Hb_50_circ,
                                      k, BloodVolume, MeanCellHb);
-  
   // baseline production of normoblasts per hour
-  double lambda  = Cstar/( (double) T_lifeSpan + 24 + T_retic - transit);    
+  double lambda = Cstar/( (double) T_lifeSpan + 24 + T_retic - transit);    
   
   // kill off 50% each day after T_E_star
   // initialise our parameters for distribution of RBCs in marrow and circulation
-  erythrocytes = lambda;
+  for(i=0; i<T_RBC_max; i++) { erythrocytes[i] = lambda; }
   for(i = T_lifeSpan+1; i<T_RBC_max; ++i){
     exponent_factor = (double) (i - T_lifeSpan)/24.0;
-    erythrocytes[i] = pow(0.5,exponent_factor) * erythrocytes[i];
+    erythrocytes[i] *= pow(0.5,exponent_factor);
   }
-  normoblasts = lambda;
-  reticulocytes = lambda;
+  for(i=0; i<T_nmblast; i++) { normoblasts[i] = lambda; }
+  for(i=0; i<T_retic; i++) { reticulocytes[i] = lambda; }
   
   Total_retics = 0; // count retics in circulation
   for(i=transit; i<T_retic; ++i) Total_retics += reticulocytes[i];
   Total_Eryths = sum(erythrocytes);
-
+  
   retic_percent[0] = 100 * Total_retics/(Total_retics + Total_Eryths);
-
-  // *********** Forward simulation *************
-  // Simulation up to nhours dependent on the primaquine dosing defined by *drug_regimen*
+  
   for(t=1; t < nhours; ++t){
-
+    
     // Compute the multiplication factor of basal normoblast production
     rho = Fold_Change_Production(rho_max, Cstar, C_t[t-1], C_50_rho);
-
+    
     // We move the RBCs from one compartment to the next
-    temp_marrow[0] = normoblasts[0];
+    temp_normoblasts = clone(normoblasts);
     normoblasts[0] = rho*lambda;      // the number of new normoblasts made at time t
     for(i = 1; i < T_nmblast; ++i){   // move all the normoblasts along by one
-      temp_marrow[i] = normoblasts[i];
-      normoblasts[i] = temp_marrow[i-1];
+      normoblasts[i] = temp_normoblasts[i-1];
     }
-
-    temp_retics[0] = reticulocytes[0];
-    reticulocytes[0] = temp_marrow[T_nmblast-1];
+    
+    temp_retics = clone(reticulocytes);
+    reticulocytes[0] = temp_normoblasts[T_nmblast-1];
     for(i = 1; i < T_retic; ++i){ // move all the retics along by one
-      temp_retics[i] = reticulocytes[i];
       reticulocytes[i] = temp_retics[i-1];
     }
-
+    
     // This part models the drug dependent killing as a shift in lifespan
     // Compute the life span at steady state for the current dose
     effectiveDose[t] = compute_effective_dose(drug_regimen, t, T_m);
-    SS_LifeSpan[t] = compute_steady_state_life_span(T_E_star,
-                                                    E_max,
-                                                    effectiveDose[t],
-                                                    x_50,PMQ_slope);
-    T_lifeSpan = round(SS_LifeSpan[t]);
-
+    SS_LifeSpan = compute_steady_state_life_span(T_E_star,
+                                                 E_max,
+                                                 effectiveDose[t],
+                                                              x_50,
+                                                              PMQ_slope);
+    T_lifeSpan = round(SS_LifeSpan);
+    
     // update the age distribution of erythrocytes
     temp_circ[0] = erythrocytes[0];
     erythrocytes[0] = temp_retics[T_retic-1];
@@ -206,38 +202,32 @@ List forward_sim(NumericVector drug_regimen,  // dose present at each hour (mg/k
         erythrocytes[i] = temp_circ[i-1]; // move along by one
       }
     }
-
+    
     // Count the number of retics and erythrocytes in circulation
     Total_retics = 0;
     for(i=transit; i<T_retic; ++i) Total_retics += reticulocytes[i];
     Total_Eryths = sum(erythrocytes);
-
+    
     // these values are stored in order to be returned at the end
     C_t[t] = Total_retics + Total_Eryths;
     Hb[t] = NumberCells_to_Hb(C_t[t],BloodVolume,MeanCellHb);
     retic_percent[t] = 100* Total_retics/(Total_retics + Total_Eryths);
-
+    
     // calculate the updated Hb dependent transit time for the reticulocytes
     transit = compute_transit_time(C_t[t],
                                    Hb_50_circ,
                                    k, BloodVolume, MeanCellHb);
-
+    
+    
   }
-
-  // Store all the circulating cells for plotting after (CAN REMOVE IN LATER VERSION)
-  NumericVector CirculatingRBCs(T_RBC_max+T_retic);
-  for(i=0; i<transit; ++i) CirculatingRBCs[i] = 0;
-  for(i = transit; i<T_retic; ++i) CirculatingRBCs[i] = reticulocytes[i];
-  for(i = 0; i<T_RBC_max; ++i) CirculatingRBCs[i+T_retic] = erythrocytes[i];
-
   return List::create(Named("Hb", Hb),
                       Named("retic_percent", retic_percent),
                       Named("normoblasts", normoblasts),
                       Named("reticulocytes", reticulocytes),
                       Named("erythrocytes", erythrocytes),
-                      Named("CiculatingRBCs", CirculatingRBCs),
                       Named("SS_LifeSpan", SS_LifeSpan),
                       Named("Retic_Transit", transit),
                       Named("T_retic", T_retic),
                       Named("effectiveDose", effectiveDose));
+  
 }
