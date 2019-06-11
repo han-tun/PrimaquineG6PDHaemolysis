@@ -74,6 +74,17 @@ double compute_transit_time(double C_t_minus_1, // number of cells at previous t
 }
 
 // [[Rcpp::export]]
+// Count the number of retics in circulation
+double CountRetics(int transit, NumericVector reticulocytes, NumericVector erythrocytes,
+                   int extra_retics){
+  double Total_retics = 0;
+  int T_retic = reticulocytes.size();
+  for(int i=transit; i<T_retic; ++i) Total_retics += reticulocytes[i];
+  for(int i=0; i<extra_retics; ++i) Total_retics += erythrocytes[i];
+  return Total_retics;
+}
+
+// [[Rcpp::export]]
 // The runs a deterministic simulation
 List forward_sim(NumericVector drug_regimen,  // dose present at each hour (mg/kg)
                  double rho_max,              // maximum fold increase in RBC production
@@ -90,6 +101,9 @@ List forward_sim(NumericVector drug_regimen,  // dose present at each hour (mg/k
                  double BloodVolume           // Total blood volume (liters)
 ){
 
+  
+  // Hack variable
+  int extra_retics = 12; 
   // set up variables we need for the simulation
   int nhours = drug_regimen.size(); // This determines the length of the simulation in hours
   int i, t;                         // i iterates over age distributions, t over time of simulation
@@ -155,8 +169,7 @@ List forward_sim(NumericVector drug_regimen,  // dose present at each hour (mg/k
   for(i=0; i<T_nmblast; i++) { normoblasts[i] = lambda; }
   for(i=0; i<T_retic; i++) { reticulocytes[i] = lambda; }
   
-  Total_retics = 0; // count retics in circulation
-  for(i=transit; i<T_retic; ++i) Total_retics += reticulocytes[i];
+  Total_retics = CountRetics(transit, reticulocytes, erythrocytes,extra_retics);
   Total_Eryths = sum(erythrocytes);
   
   retic_percent[0] = 100 * Total_retics/(Total_retics + Total_Eryths);
@@ -204,8 +217,7 @@ List forward_sim(NumericVector drug_regimen,  // dose present at each hour (mg/k
     }
     
     // Count the number of retics and erythrocytes in circulation
-    Total_retics = 0;
-    for(i=transit; i<T_retic; ++i) Total_retics += reticulocytes[i];
+    Total_retics = CountRetics(transit, reticulocytes, erythrocytes,extra_retics);
     Total_Eryths = sum(erythrocytes);
     
     // these values are stored in order to be returned at the end

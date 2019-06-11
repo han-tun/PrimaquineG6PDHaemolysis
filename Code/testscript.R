@@ -1,7 +1,6 @@
 rm(list=ls())
-blues = sapply(seq(0.2,.5,by=0.1), function(x) adjustcolor('blue', alpha.f = x))
 load('../Data/HaemolysisData.RData')
-
+load('../../HaemolysisData.RData')
 Rcpp::sourceCpp('ForwardSim.cpp')
 
 
@@ -15,9 +14,9 @@ Hb_50_circ = 10
 Hb_50_rho = 10
 E_max = .3
 x_50 = 15/60
-PMQ_slope = 2
+PMQ_slope = 3
 rho_max = 5
-Hb_star = 15
+Hb_star = 14.5
 
 
 # This looks at the individual functions to get an idea of their behaviour and reasonable parameters
@@ -33,8 +32,8 @@ for(i in 1:length(Hbs)){
                                      BloodVolume = BloodVolume,
                                      MeanCellHb = MCH))/24
 }
-plot(Hbs,tts, type='l', ylab = 'Number of days that retics circulate', 
-     xlab='Haemoglobin',main = 'transit time function')
+# plot(Hbs,tts, type='l', ylab = 'Number of days that retics circulate', 
+#      xlab='Haemoglobin',main = 'transit time function')
 
 
 par(las=1, bty='n', mfrow=c(2,2))
@@ -50,7 +49,8 @@ for(i in 1:length(ds)){
                                            PMQ_slope = PMQ_slope)
 }
 plot(ds*60, ssls/24, type='l',xlab = 'Effective PMQ dose in 60 kg adult',
-     ylab = 'Lifespan of erythrocytes')
+     ylab = 'Days survival of erythrocytes',lwd=2)
+title('Dose-response curve')
 
 ##****** The fold change function: how the production of RBCs changes as a function of Hb *******
 Hbs = 1:20
@@ -67,11 +67,12 @@ for(i in 1:length(Hbs)){
                                                                 BloodVolume = BloodVolume,
                                                                 MeanCellHb = MCH))
 }
-plot(Hbs, rhos, type='l',xlab = 'Hb',ylab = 'Fold change in normoblast production',lwd=3)
-abline(h=1, v=15)
+plot(Hbs, rhos, type='l',xlab = 'Hb',ylab = 'Fold change in normoblast production',lwd=2)
+abline(h=1, v=Hb_star)
+title('Production of new normoblasts')
 
 ##****** Testing out the full simulation function *******
-drug_regimen = unlist(lapply(c(7.5, 15, 22.5, 30, 0, 0)/60, function(x) rep(x, 5*24)))
+drug_regimen = unlist(lapply(c(7.5, 15, 22.5, 30, 0, 0,0,0,0,0,0)/60, function(x) rep(x, 5*24)))
 out = forward_sim(drug_regimen = as.double(drug_regimen),
                   rho_max = rho_max,
                   Hb_steady_state = Hb_star,
