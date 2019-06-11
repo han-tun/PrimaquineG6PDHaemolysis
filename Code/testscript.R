@@ -5,15 +5,15 @@ load('../Data/HaemolysisData.RData')
 Rcpp::sourceCpp('ForwardSim.cpp')
 
 
-par(las=1, bty='n', mfrow=c(3,2))
+par(las=1, bty='n')
 
 ##** Parameters for the simulations ####
-T_E_star = as.integer(100*24)
+T_E_star = as.integer(115*24)
 BloodVolume = 5
 MCH = 30
 Hb_50_circ = 10
 Hb_50_rho = 10
-E_max = .4
+E_max = .3
 x_50 = 15/60
 PMQ_slope = 2
 rho_max = 5
@@ -36,6 +36,8 @@ for(i in 1:length(Hbs)){
 plot(Hbs,tts, type='l', ylab = 'Number of days that retics circulate', 
      xlab='Haemoglobin',main = 'transit time function')
 
+
+par(las=1, bty='n', mfrow=c(2,2))
 
 ##****** The lifespan function for different mg/kg PMQ doses *******
 ds = seq(0,45,length.out = 100)/60
@@ -84,11 +86,31 @@ out = forward_sim(drug_regimen = as.double(drug_regimen),
                   MeanCellHb = MCH,
                   BloodVolume = BloodVolume)
 
-plot((1:length(drug_regimen))/24,out$Hb, lwd=2,#ylim=c(30,45)/3,
+plot((1:length(drug_regimen))/24,out$Hb, lwd=2,
+     ylim=range(c(out$Hb, Haemodata_Analysis$Hb)),
      type='l',xlab='days',ylab = 'Haemoglobin (g/dL)')
 title("Haemoglobin")
-plot((1:length(drug_regimen))/24,out$retic_percent, lwd=2,#ylim=c(0,9),
+
+mean_Hbs = array(dim=length(unique(Haemodata_Analysis$Day)))
+mean_Retics = array(dim=length(unique(Haemodata_Analysis$Day)))
+for(dd in unique(Haemodata_Analysis$Day)){
+  ind = Haemodata_Analysis$Day==dd
+  points(dd, mean(Haemodata_Analysis$Hb[ind]), pch=18, col='red')
+  lines(c(dd,dd), quantile(Haemodata_Analysis$Hb[ind], probs = c(.1,.9)))
+  mean_Hbs[which(dd==unique(Haemodata_Analysis$Day))] = mean(Haemodata_Analysis$Hb[ind])
+}
+lines(unique(Haemodata_Analysis$Day), mean_Hbs, col='red', lwd=2)
+
+
+plot((1:length(drug_regimen))/24,out$retic_percent, lwd=2,
+     ylim=range(c(Haemodata_Analysis$Rectic_percent, out$retic_percent), na.rm = T),
      type='l',xlab='days',ylab = 'retics (%)')
+for(dd in unique(Haemodata_Analysis$Day)){
+  ind = Haemodata_Analysis$Day==dd
+  points(dd, mean(Haemodata_Analysis$Rectic_percent[ind]), pch=18, col='red')
+  lines(c(dd,dd), quantile(Haemodata_Analysis$Rectic_percent[ind], probs = c(.1,.9),na.rm = T))
+  mean_Retics[which(dd==unique(Haemodata_Analysis$Day))] = mean(Haemodata_Analysis$Rectic_percent[ind])
+}
 title("Retic count")
 
 
