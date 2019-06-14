@@ -114,4 +114,22 @@ for(dd in unique(Haemodata_Analysis$Day)){
 }
 title("Retic count")
 
+par(mfrow=c(1,2))
+out2 = forward_sim(drug_regimen = as.double(c(0,0)),
+                   rho_max = rho_max,
+                   Hb_steady_state = Hb_star,
+                   Hb_50_rho = Hb_50_rho,
+                   Hb_50_circ = Hb_50_circ,
+                   k = 10^(-6),
+                   E_max = E_max,
+                   x_50 = x_50,
+                   T_m = as.integer(7*24),
+                   T_E_star = T_E_star,
+                   PMQ_slope = PMQ_slope,
+                   MeanCellHb = MCH,
+                   BloodVolume = BloodVolume)
+plot((1:length(out2$erythrocytes))/24, out2$erythrocytes, type='l', xlab = 'Age (days)', ylab='Number of cells')
+title('Steady state')
 
+plot((1:length(out$erythrocytes))/24, out$erythrocytes, type='l', xlab = 'Age (days)', ylab='Number of cells')
+title('After ascending dose (day 55)')
