@@ -3,20 +3,19 @@ using namespace Rcpp;
 
 // [[Rcpp::export]]
 // This function computes the effective dose given a dosing schedule vector
-double compute_effective_dose(NumericVector drug_regimen, int t, int T_m){
+double compute_effective_dose(NumericVector drug_regimen, int t, double lambda_memory = -.5){
   // drug_regimen: a vector of hourly primaquine `equivalent' doses 
   // (in practice only dosed once a day, this can later changed to drug concentration)
   // t: current time point
-  // T_m: time delay to reach full effect
   if(t > drug_regimen.size()) throw std::range_error("Inadmissible value for t");
   double effective_dose = 0.0;
+  NumericVector weights(t); 
+  double dt = 1.0 / 24.0;
   if(t > 0){
-    // index at which we start counting for the effective dose
-    int jmin = max(IntegerVector::create(0,t-T_m)); 
-    // sum over previous doses 
-    for(int j=jmin; j<t; ++j) effective_dose += drug_regimen[j];
+    for(int i=0; i < t; ++i) weights[i] = dt * exp(lambda_memory * (double) (t-i)/24 );
+    weights = (1.0 - exp(lambda_memory*t/24)) * weights/ sum(weights);
+    effective_dose = sum(weights * drug_regimen);
   }
-  effective_dose = effective_dose / ((double) T_m); //normalise to get effective dose
   return effective_dose;
 }
 
@@ -91,14 +90,13 @@ List forward_sim(NumericVector drug_regimen,  // dose present at each hour (mg/k
                  double Hb_steady_state,      // steady state Hb (g/dL)
                  double Hb_50_rho,            // Hb corresponding to half of max fold increase (g/dL)
                  double Hb_50_circ,           // Hb corresponding to half transit time value (g/dL)
-                 double k,                    // steepness of transit curve
-                 double E_max,                // maximum relative decrease in length of RBC life span
-                 double PMQ_slope,            // slope parameter of dose response curve
-                 double x_50,                 // dose giving half decrease in life span (mg/kg)
-                 int T_E_star,                // steady state duration of RBC life (hours)
-                 int T_m,                     // delay in reaching effective dose (hours)
-                 double MeanCellHb,           // mean corpuscular Hb (picogram)
-                 double BloodVolume           // Total blood volume (liters)
+                 double k = 10^(-6),          // steepness of transit curve
+                 double E_max = 0.3,                // maximum relative decrease in length of RBC life span
+                 double PMQ_slope = 1,            // slope parameter of dose response curve
+                 double x_50 = .2,                 // dose giving half decrease in life span (mg/kg)
+                 int T_E_star = 24*115,                // steady state duration of RBC life (hours)
+                 double MeanCellHb = 30,           // mean corpuscular Hb (picogram)
+                 double BloodVolume = 5          // Total blood volume (liters)
 ){
 
   
@@ -174,6 +172,7 @@ List forward_sim(NumericVector drug_regimen,  // dose present at each hour (mg/k
   
   retic_percent[0] = 100 * Total_retics/(Total_retics + Total_Eryths);
   
+  //******************* Forward simulation *****************//
   for(t=1; t < nhours; ++t){
     
     // Compute the multiplication factor of basal normoblast production
@@ -194,7 +193,7 @@ List forward_sim(NumericVector drug_regimen,  // dose present at each hour (mg/k
     
     // This part models the drug dependent killing as a shift in lifespan
     // Compute the life span at steady state for the current dose
-    effectiveDose[t] = compute_effective_dose(drug_regimen, t, T_m);
+    effectiveDose[t] = compute_effective_dose(drug_regimen, t);
     SS_LifeSpan = compute_steady_state_life_span(T_E_star,
                                                  E_max,
                                                  effectiveDose[t],

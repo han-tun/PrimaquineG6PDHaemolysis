@@ -1,135 +1,158 @@
+setwd("~/Dropbox/MORU/RBC modelling/PrimaquineHaemolysis/PrimaquineG6PDHaemolysis/Code")
+library(dplyr)
+library(tictoc)
+
 rm(list=ls())
-load('../Data/HaemolysisData.RData')
 load('../../HaemolysisData.RData')
 Rcpp::sourceCpp('ForwardSim.cpp')
-
-
+source('inference_functions.R')
+source('optimisation_functions.R')
 par(las=1, bty='n')
 
+
 ##** Parameters for the simulations ####
-T_E_star = as.integer(115*24)
-BloodVolume = 5
-MCH = 30
-Hb_50_circ = 10
-Hb_50_rho = 10
-E_max = .3
-x_50 = 15/60
-PMQ_slope = 3
-rho_max = 5
-Hb_star = 14.5
+params = unlist(list(T_E_star = as.integer(115*24),
+                     BloodVolume = 5,
+                     MCH = 30,
+                     Hb_50_circ = 10,
+                     Hb_50_rho = 10,
+                     E_max = .3,
+                     x_50 = 15/60,
+                     PMQ_slope = 3,
+                     rho_max = 5,
+                     Hb_star = 14.5))
+
+Haemodata_Analysis = filter(Haemodata_Analysis, Day >= 0 )
+Haemodata_Analysis$Day = Haemodata_Analysis$Day + 1
 
 
-# This looks at the individual functions to get an idea of their behaviour and reasonable parameters
-##****** The transit time function for reticulocytes moving from bone marrow to circulation
-Hbs = seq(5,16,length.out = 100)
-tts = array(dim=length(Hbs))
-for(i in 1:length(Hbs)){
-  tts[i] = (120-compute_transit_time(C_t_minus_1 = Hb_to_NumberCells(Hb = Hbs[i],
-                                                                     BloodVolume = BloodVolume,
-                                                                     MeanCellHb = MCH),
-                                     Hb_50_circ = Hb_50_circ, 
-                                     k = 10^(-6),
-                                     BloodVolume = BloodVolume,
-                                     MeanCellHb = MCH))/24
+#*********** Run accept-reject style simulation by generating from the prior *************
+drug_regimen = array(sapply(c(7.5,15,22.5,30,0,0),rep,24*5))/60
+
+N = 100000
+x = array(dim = N)
+params_list = generate_from_prior(n = N)
+tic()
+pb=txtProgressBar(max = N, style = 3)
+for(i in 1:N){
+  x[i] = compute_post_density(params = params_list[[i]],drug_regimen = drug_regimen,
+                              Haemodata_Analysis = Haemodata_Analysis)
+  setTxtProgressBar(pb, value = i)
 }
-# plot(Hbs,tts, type='l', ylab = 'Number of days that retics circulate', 
-#      xlab='Haemoglobin',main = 'transit time function')
+toc()
+
+hist(x[x > -1000])
+params_max = params_list[[which.max(x)]]
+out_max = estimate_sim_profile(params = params_max,drug_regimen = drug_regimen)
 
 
-par(las=1, bty='n', mfrow=c(2,2))
-
-##****** The lifespan function for different mg/kg PMQ doses *******
-ds = seq(0,45,length.out = 100)/60
-ssls = array(dim = length(ds))
-for(i in 1:length(ds)){
-  ssls[i] = compute_steady_state_life_span(T_E_star = T_E_star,
-                                           E_max = E_max, # fraction decrease
-                                           effectivePMQdose = ds[i],
-                                           x_50 = x_50,
-                                           PMQ_slope = PMQ_slope)
-}
-plot(ds*60, ssls/24, type='l',xlab = 'Effective PMQ dose in 60 kg adult',
-     ylab = 'Days survival of erythrocytes',lwd=2)
-title('Dose-response curve')
-
-##****** The fold change function: how the production of RBCs changes as a function of Hb *******
-Hbs = 1:20
-rhos = array(dim = length(Hbs))
-for(i in 1:length(Hbs)){
-  rhos[i] = Fold_Change_Production(rho_max = rho_max,
-                                   Cstar = Hb_to_NumberCells(Hb = Hb_star,
-                                                             BloodVolume = BloodVolume,
-                                                             MeanCellHb = MCH),
-                                   C_t_minus_1 = Hb_to_NumberCells(Hb = Hbs[i],
-                                                                   BloodVolume = BloodVolume,
-                                                                   MeanCellHb = MCH),
-                                   C_50_rho = Hb_to_NumberCells(Hb = Hb_50_rho,
-                                                                BloodVolume = BloodVolume,
-                                                                MeanCellHb = MCH))
-}
-plot(Hbs, rhos, type='l',xlab = 'Hb',ylab = 'Fold change in normoblast production',lwd=2)
-abline(h=1, v=Hb_star)
-title('Production of new normoblasts')
-
-##****** Testing out the full simulation function *******
-drug_regimen = unlist(lapply(c(7.5, 15, 22.5, 30, 0, 0,0,0,0,0,0)/60, function(x) rep(x, 5*24)))
-out = forward_sim(drug_regimen = as.double(drug_regimen),
-                  rho_max = rho_max,
-                  Hb_steady_state = Hb_star,
-                  Hb_50_rho = Hb_50_rho,
-                  Hb_50_circ = Hb_50_circ,
-                  k = 10^(-6),
-                  E_max = E_max,
-                  x_50 = x_50,
-                  T_m = as.integer(7*24),
-                  T_E_star = T_E_star,
-                  PMQ_slope = PMQ_slope,
-                  MeanCellHb = MCH,
-                  BloodVolume = BloodVolume)
-
-plot((1:length(drug_regimen))/24,out$Hb, lwd=2,
-     ylim=range(c(out$Hb, Haemodata_Analysis$Hb)),
+par(mfrow=c(1,2),las=1,bty='n')
+sim_black = adjustcolor('black',alpha.f = .1)
+plot((1:length(drug_regimen))/24,out_max$Hb, lwd=4,
+     ylim=range(c(out_max$Hb, Haemodata_Analysis$Hb)),
      type='l',xlab='days',ylab = 'Haemoglobin (g/dL)')
+plot_Hb_data(Haemodata_Analysis, col_line = 'red')
+
 title("Haemoglobin")
-
-mean_Hbs = array(dim=length(unique(Haemodata_Analysis$Day)))
-mean_Retics = array(dim=length(unique(Haemodata_Analysis$Day)))
-for(dd in unique(Haemodata_Analysis$Day)){
-  ind = Haemodata_Analysis$Day==dd
-  points(dd, mean(Haemodata_Analysis$Hb[ind]), pch=18, col='red')
-  lines(c(dd,dd), quantile(Haemodata_Analysis$Hb[ind], probs = c(.1,.9)))
-  mean_Hbs[which(dd==unique(Haemodata_Analysis$Day))] = mean(Haemodata_Analysis$Hb[ind])
+ind = sample(which(x > quantile(x, probs = 0.999)),replace = T,size = 200)
+for(j in ind){
+  params = params_list[[j]]
+  out = estimate_sim_profile(params = params,drug_regimen = drug_regimen)
+  lines((1:length(drug_regimen))/24,out$Hb, col = sim_black)
 }
-lines(unique(Haemodata_Analysis$Day), mean_Hbs, col='red', lwd=2)
 
 
-plot((1:length(drug_regimen))/24,out$retic_percent, lwd=2,
+plot((1:length(drug_regimen))/24,out$retic_percent, lwd=4,
      ylim=range(c(Haemodata_Analysis$Rectic_percent, out$retic_percent), na.rm = T),
      type='l',xlab='days',ylab = 'retics (%)')
-for(dd in unique(Haemodata_Analysis$Day)){
-  ind = Haemodata_Analysis$Day==dd
-  points(dd, mean(Haemodata_Analysis$Rectic_percent[ind]), pch=18, col='red')
-  lines(c(dd,dd), quantile(Haemodata_Analysis$Rectic_percent[ind], probs = c(.1,.9),na.rm = T))
-  mean_Retics[which(dd==unique(Haemodata_Analysis$Day))] = mean(Haemodata_Analysis$Rectic_percent[ind])
+ind = sample(which(x > quantile(x, probs = 0.999)),replace = T,size = 200)
+plot_Retic_data(Haemodata_Analysis,col_line = 'red')
+for(j in ind){
+  params = params_list[[j]]
+  out = estimate_sim_profile(params = params,drug_regimen = drug_regimen)
+  lines((1:length(drug_regimen))/24,out$retic_percent, col = sim_black)
 }
-title("Retic count")
+title("Reticulocyte count")
+
+par(mfrow=c(1,1))
+plot_dose_response(params_max,lwd=4, ylim = c(50,120),add = F)
+for(j in ind){
+  params = params_list[[j]]
+  plot_dose_response(params,lwd=1, col=sim_black,add=T)
+}
+
+optimal_two_week_reg = optimise_regimen(params = params_max,min_total_dose = 375,duration = 14)
+optimal_20day_reg = optimise_regimen(params = params_max,min_total_dose = 375,duration = 20)
 
 par(mfrow=c(1,2))
-out2 = forward_sim(drug_regimen = as.double(c(0,0)),
-                   rho_max = rho_max,
-                   Hb_steady_state = Hb_star,
-                   Hb_50_rho = Hb_50_rho,
-                   Hb_50_circ = Hb_50_circ,
-                   k = 10^(-6),
-                   E_max = E_max,
-                   x_50 = x_50,
-                   T_m = as.integer(7*24),
-                   T_E_star = T_E_star,
-                   PMQ_slope = PMQ_slope,
-                   MeanCellHb = MCH,
-                   BloodVolume = BloodVolume)
-plot((1:length(out2$erythrocytes))/24, out2$erythrocytes, type='l', xlab = 'Age (days)', ylab='Number of cells')
-title('Steady state')
 
-plot((1:length(out$erythrocytes))/24, out$erythrocytes, type='l', xlab = 'Age (days)', ylab='Number of cells')
-title('After ascending dose (day 55)')
+drug_regimen = array(sapply(c(7.5,15,22.5,30,0,0),rep,24*5))/60
+drug_regimen_14days = array(sapply(c(optimal_two_week_reg,rep(0,12)), rep, 24))/60
+drug_regimen_20days = array(sapply(c(optimal_20day_reg,rep(0,5)), rep, 24))/60
+
+# Plot the regimens
+ind=drug_regimen_20days>0
+plot(1:(24*20), drug_regimen_20days[ind]*60, type = 'l', lwd=3, xaxt='n',ylab='Daily mg dose',xlab='Days',
+     ylim=c(5,45))
+axis(1, at = c(0,5,10,15,20)*24,labels = c(1,5,10,15,20))
+ind=drug_regimen_14days>0
+lines(1:(24*14), drug_regimen_14days[ind]*60, lwd=3, col='blue')
+ind=drug_regimen>0
+lines(1:(24*20), drug_regimen[ind]*60, lwd=3, lty=2)
+legend('bottomright',col = c('black','black','blue'), 
+       legend = c('Currently tested', 'Predicted optimal: 20days','Predicted optimal: 14days'),
+       lwd=3, lty = c(2,1,1), inset=0.01)
+
+out_14days=estimate_sim_profile(params = params_max,drug_regimen = drug_regimen_14days)
+out_20days=estimate_sim_profile(params = params_max,drug_regimen = drug_regimen_20days)
+out =estimate_sim_profile(params = params_max,drug_regimen = drug_regimen)
+
+plot((1:length(drug_regimen_14days))/24,out_14days$Hb, lwd=4,
+     ylim=range(c(out_14days$Hb, Haemodata_Analysis$Hb)),
+     type='l',xlab='Days',ylab = 'Haemoglobin (g/dL)',col='blue')
+lines((1:length(drug_regimen_20days))/24,out_20days$Hb, lwd=4)
+lines((1:length(drug_regimen))/24,out$Hb, lwd=4, lty=2)
+
+
+##********** Primaquine followed by tafenoquine ***************####
+optimal_7day_reg = optimise_regimen(params = params_max,min_total_dose = 50,duration = 7, min_increment = 2.5, max_single_dose=15)
+optimal_5day_reg = optimise_regimen(params = params_max,min_total_dose = 50,duration = 5, min_increment = 2.5, max_single_dose=15)
+wait_one_week = rep(0,7)
+tafenoquine_350 = c(rep(20,3*7), rep(0,10)) # equivalence assumed....
+
+
+ll=1
+par(mfrow=c(1,2),las=1)
+plot(1:(24*7), array(sapply(optimal_7day_reg,rep,24)), yaxt='n', type='l',xaxt='n',
+     ylab='Primaquine dose', xlab='Days', lwd=3, col=adjustcolor('red',ll))
+axis(1, at = (0:7)*24, labels = 0:7)
+axis(2, at =c(5,7.5,10,15))
+lines(1:(24*5), array(sapply(optimal_5day_reg,rep,24)), col = adjustcolor('green',ll),lwd=3)
+
+comb = list(TQ = tafenoquine_350,
+            comb_1 =c(optimal_7day_reg, wait_one_week, tafenoquine_350),
+            comb_2 = c(optimal_5day_reg, wait_one_week, tafenoquine_350),
+            comb_3 = c(optimal_7day_reg, tafenoquine_350),
+            comb_4 = c(optimal_5day_reg, tafenoquine_350))
+cols = c('blue', rep(c(adjustcolor('red',ll), adjustcolor('green',ll)),2))
+ltys = c(1, 1,1,2,2)
+plot(NA,NA, xlim = c(0,30), ylim = c(12,15), xlab = 'Days from start of regimen',
+     ylab = 'Haemoglobin (g/dL)')
+for(i in 1:length(comb)){
+  drug_regimen = array(sapply(comb[[i]],rep,24))/60
+  out = estimate_sim_profile(params = params_max,drug_regimen = drug_regimen)
+  lines((1:length(drug_regimen))/24,out$Hb,lwd=3, col=cols[i],lty=ltys[i])
+}
+legend('topright', col = cols, lty=ltys, lwd=3,
+       legend = c('Tafenoquine alone',
+                  '7 days PMQ + TQ (week wait)',
+                  '5 days PMQ + TQ (week wait)',
+                  '7 days PMQ + TQ (no wait)',
+                  '5 days PMQ + TQ (no wait)'))
+
+par(las=1, mfrow=c(1,1))
+params_illsu = params_max
+params_illsu['T_E_star'] = 115*24
+plot_dose_response(params_illsu,lwd=3)
+
+
