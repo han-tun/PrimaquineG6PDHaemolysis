@@ -1,0 +1,245 @@
+##########functions for Rstan code based on James's C++ functions#########
+##########################Parinaz on 04/09/19##############################
+
+## This function computes the effective dose given a dosing schedule vector
+compute_effective_dose = function(drug_regimen, t, lambda_memory = -.5 ){
+  ## drug_regimen: a vector of hourly primaquine `equivalent' doses 
+  ## (in practice only dosed once a day, this can later changed to drug concentration)
+  ## t: current time point
+  if(t > length(drug_regimen)) 
+  {
+    cat("Error! Inadmissible value for t #")
+  }else{
+    effective_dose = 0.0
+    weights = rep(0.0,t)
+    dt = 1.0 / 24.0
+    for( i in 1:t) {
+      weights[i] = dt * exp(lambda_memory * (t-i)/24 )
+      weights = (1.0 - exp(lambda_memory*t/24)) * weights/ sum(weights)
+      effective_dose = sum(weights * drug_regimen)
+    }
+  }
+  return (effective_dose)
+}
+
+## Convert an Hb value to a number of RBCs in the body
+Hb_to_NumberCells = function( Hb,  BloodVolume,  MeanCellHb)
+{
+  Ncells = ((10^6) * Hb * BloodVolume * 10) / MeanCellHb
+  return (Ncells)
+}
+
+## Convert a number of RBCs in the body to an Hb concentration
+NumberCells_to_Hb = function( Ct,  BloodVolume,  MeanCellHb)
+{
+  Hb = ((10^-6) * Ct * MeanCellHb) / (10 * BloodVolume)
+  return (Hb)
+}
+
+
+## Compute the fold change from baseline in the number of new normoblasts produced given the number of cells in the body
+# rho_max,       // Max fold increase
+# Cstar,         // Steady state number of cells
+# C_t_minus_1,   // Total number of cells at previous timepoint
+# C_50_rho       // mid point
+Fold_Change_Production = function( rho_max, Cstar, C_t_minus_1,C_50_rho)
+{
+  rho = rho_max/(1 + exp(log(rho_max-1)/(Cstar - C_50_rho)*(C_t_minus_1 - C_50_rho)))
+  return (rho)
+}
+
+
+## Compute the steady state life span for a given effective dose
+# double T_E_star,        // Lifespan when no drug
+# double E_max,           // Maximum reduction in lifespan when given PMQ
+# double effectivePMQdose,// current effective dose
+# double x_50,            // mid-point
+# double PMQ_slope){      // slope parameter
+compute_steady_state_life_span = function( T_E_star,   E_max,   effectivePMQdose, x_50, PMQ_slope)
+{      
+  SteadyState_LifeSpan = T_E_star*(1 - E_max/(1 + exp(-PMQ_slope * (log(effectivePMQdose) - log(x_50) ))) )
+  return (SteadyState_LifeSpan)
+}
+
+
+##Compute the age at which retics enter the circulation
+# double C_t_minus_1, // number of cells at previous time point
+# double Hb_50_circ,  // mid point (hb units)
+# double k,           // slope
+# double BloodVolume, // Volume of blood
+# double MeanCellHb) // Hb per cell
+compute_transit_time = function( C_t_minus_1,  Hb_50_circ,k, BloodVolume, MeanCellHb)
+{ 
+  ## next line should be changed: no need to recalculate each time
+  C_50_circ = Hb_to_NumberCells(Hb_50_circ,BloodVolume,MeanCellHb)
+  transit = floor( (24*2.56)/(1+exp(-k * (C_t_minus_1 - C_50_circ) ))) + 24
+  return (transit)
+}
+
+
+## Count the number of retics in circulation
+CountRetics = function( transit,  reticulocytes,  erythrocytes, extra_retics)
+{
+  Total_retics = 0
+  T_retic = length(reticulocytes)
+  for( i in transit:T_retic){
+    Total_retics = reticulocytes[i]+Total_retics
+  }
+  for(i in 1:extra_retics){
+    Total_retics = erythrocytes[i]+Total_retics
+  }
+  return (Total_retics)
+}
+
+## The runs a deterministic simulation
+forward_sim = function(drug_regimen,  ## dose present at each hour (mg/kg)
+                       rho_max,              ## maximum fold increase in RBC production
+                       Hb_steady_state,      ## steady state Hb (g/dL)
+                       Hb_50_rho,            ## Hb corresponding to half of max fold increase (g/dL)
+                       Hb_50_circ,           ## Hb corresponding to half transit time value (g/dL)
+                       k = 10^(-6),          ## steepness of transit curve
+                       E_max = 0.3,                ## maximum relative decrease in length of RBC life span
+                       PMQ_slope = 1,            ## slope parameter of dose response curve
+                       x_50 = .2,                 ## dose giving half decrease in life span (mg/kg)
+                       T_E_star = 24*115,                ## steady state duration of RBC life (hours)
+                       MeanCellHb = 30,           ## mean corpuscular Hb (picogram)
+                       BloodVolume = 5          ## Total blood volume (liters)
+){
+  
+  out_list = list()
+  ## Hack variable
+  extra_retics = 12
+  ## set up variables we need for the simulation
+  nhours = length(drug_regimen)  ## This determines the length of the simulation in hours
+  ##int i, t;                         // i iterates over age distributions, t over time of simulation
+  T_nmblast  = 24*5           ## number of hours of maturation of normoblasts
+  T_retic = 24*5              ## lifespan of a reticulocyte, including marrow and circulating periods
+  T_RBC_max = 24*150           ## max duration of RBC life: arbitrary to some extent (hours)
+  #double SS_LifeSpan;        // The drug dependent life span of an RBC (true continuous value)
+  #int T_lifeSpan;                         // The drug dependent life span of an RBC (rounded up to hours)
+  #double rho;                             // stores the fold change increase in production of normoblasts
+  #double Total_Eryths, Total_retics;      // Total circulating erythrocytes and retics
+  #double exponent_factor;                 // Used to compute the effect
+  
+  effectiveDose = rep(0,nhours)    ## this is used for the lag effect, we can reduce down to single value later (currently tracking it)
+  Hb = rep(0,nhours)               ## The Hb at each point in the simulation
+  C_t = rep(0,nhours)              ## The number of circulating cells at each point in the simulation
+  retic_percent = rep(0,nhours)    ## The retic count (%) at each point in the simulation
+  
+  # vectors to store red blood cell age distributions
+  erythrocytes = rep(0,T_RBC_max)  ## Distribution of erythrocytes in circulation
+  normoblasts = rep(0,T_nmblast)   ## Distribution of normoblasts 
+  reticulocytes = rep(0,T_retic)   ## Distribution of reticulocytes 
+  temp_circ= rep(0,T_RBC_max)     ## for storing: temporary vectors
+  temp_normoblasts = rep(0,T_nmblast)
+  temp_retics = rep(0,T_retic)
+  
+  
+  ##***** some checks on input values ****
+  if(min(drug_regimen) < 0) {cat("Inadmissible value")}
+  if(nhours == 0) { effectiveDose=0}
+  if(T_E_star > T_RBC_max) {cat("T_E_star cannot be greater than T_RBC_max")}
+  ## More thorough input checks are needed....  
+  
+  ## ***** Calculate initial values *****
+  browser()
+  ## The number of red blood cells in the body at steady state
+  Cstar = Hb_to_NumberCells(Hb_steady_state,BloodVolume,MeanCellHb)
+  C_50_rho = Hb_to_NumberCells(Hb_50_rho,BloodVolume,MeanCellHb)
+  C_t[1] = Cstar
+  effectiveDose[1] = 0.0
+  ## The steady state lifespan: assuming at no drug steady state
+  SS_LifeSpan = compute_steady_state_life_span(T_E_star,
+                                               E_max,
+                                               effectiveDose[1],
+                                               x_50,
+                                               PMQ_slope)
+  T_lifeSpan = round(SS_LifeSpan)  ## the rounded up approximation
+  Hb[1] = Hb_steady_state
+  
+  ## compute time at which retics are in the circulation
+  transit = compute_transit_time(C_t[1], Hb_50_circ, k, BloodVolume, MeanCellHb)
+  ## baseline production of normoblasts per hour
+  lambda = Cstar/( T_lifeSpan + 24 + T_retic - transit)  
+  
+  ## kill off 50% each day after T_E_star
+  ## initialise our parameters for distribution of RBCs in marrow and circulation
+  for(i in 1:T_RBC_max) { erythrocytes[i] = lambda }
+  for(i in (T_lifeSpan+1):T_RBC_max) 
+  {
+    exponent_factor = (i - T_lifeSpan)/24.0
+    erythrocytes[i] = (0.5^exponent_factor)*erythrocytes[i]
+  }
+  for(i in 1:T_nmblast) { normoblasts[i] = lambda }
+  for(i in 1:T_retic) { reticulocytes[i] = lambda }
+  
+  Total_retics = CountRetics(transit, reticulocytes, erythrocytes,extra_retics)
+  Total_Eryths = sum(erythrocytes)
+  
+  retic_percent[1] = 100 * Total_retics/(Total_retics + Total_Eryths)
+  
+  ##******************* Forward simulation *****************//
+  for(t in 1:nhours) {
+    browser()
+    ## Compute the multiplication factor of basal normoblast production
+    if (t==1){
+      rho = Fold_Change_Production(rho_max, Cstar, C_t[1], C_50_rho)
+    }else{
+      rho = Fold_Change_Production(rho_max, Cstar, C_t[t-1], C_50_rho)
+    }
+    
+    ## We move the RBCs from one compartment to the next
+    temp_normoblasts = normoblasts  #make a copy
+    normoblasts[1] = rho*lambda;      ## the number of new normoblasts made at time t
+    for(i in 2:T_nmblast) {   ## move all the normoblasts along by one
+      normoblasts[i] = temp_normoblasts[i-1]
+    }
+    
+    temp_retics = reticulocytes
+    reticulocytes[1] = temp_normoblasts[T_nmblast-1]   #make a copy
+    for(i in 2:T_retic){ ## move all the retics along by one
+      reticulocytes[i] = temp_retics[i-1]
+    }
+    
+    ## This part models the drug dependent killing as a shift in lifespan
+    ## Compute the life span at steady state for the current dose
+    effectiveDose[t] = compute_effective_dose(drug_regimen, t)
+    SS_LifeSpan = compute_steady_state_life_span(T_E_star,
+                                                 E_max,
+                                                 effectiveDose[t],
+                                                 x_50,
+                                                 PMQ_slope)
+    T_lifeSpan = round(SS_LifeSpan)
+    
+    ## update the age distribution of erythrocytes
+    temp_circ[1] = erythrocytes[1]
+    erythrocytes[1] = temp_retics[T_retic-1]
+    for(i in 2:T_RBC_max){
+      temp_circ[i] = erythrocytes[i]
+      if(i > T_lifeSpan) {
+        ## from T_lifeSpan onwards, reduce by half each day
+        exponent_factor = (i - T_lifeSpan)/24.0
+        erythrocytes[i] = (0.5^ exponent_factor) * temp_circ[i-1]
+      } else {
+        erythrocytes[i] = temp_circ[i-1] ## move along by one
+      }
+    }  
+    
+    ## Count the number of retics and erythrocytes in circulation
+    Total_retics = CountRetics(transit, reticulocytes, erythrocytes,extra_retics)
+    Total_Eryths = sum(erythrocytes)
+    
+    ## these values are stored in order to be returned at the end
+    C_t[t] = Total_retics + Total_Eryths
+    Hb[t] = NumberCells_to_Hb(C_t[t],BloodVolume,MeanCellHb)
+    retic_percent[t] = 100* Total_retics/(Total_retics + Total_Eryths)
+    
+    ## calculate the updated Hb dependent transit time for the reticulocytes
+    transit = compute_transit_time(C_t[t], Hb_50_circ, k, BloodVolume, MeanCellHb)
+  }
+  out_list = list(Hb = Hb,retic_percent=retic_percent,normoblasts=normoblasts,reticulocytes=reticulocytes,
+                  erythrocytes=erythrocytes,SS_LifeSpan=SS_LifeSpan,Retic_Transit=transit,
+                  T_retic=T_retic,effectiveDose= effectiveDose)
+  
+  return(out_list)
+}
